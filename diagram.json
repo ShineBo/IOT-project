@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "author": "Enhanced Smart Fan Control with LCD & RGB",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -172.5,
+      "left": 23.4,
+      "attrs": { "temperature": "28.5", "humidity": "65" }
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": -240,
+      "left": 230.4,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_fan",
+      "top": 44.4,
+      "left": 288,
+      "attrs": { "color": "red", "label": "Fan" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_status",
+      "top": 94.4,
+      "left": 288,
+      "attrs": { "color": "green", "label": "Status" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_alert",
+      "top": 144.4,
+      "left": 288,
+      "attrs": { "color": "yellow", "label": "Alert" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": -76.8,
+      "left": 230.4,
+      "attrs": { "color": "blue", "label": "Manual Mode(Fan On and Off)" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "rgb_red",
+      "top": 204.4,
+      "left": 288,
+      "attrs": { "color": "red", "label": "Hot Temperature" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "rgb_green",
+      "top": 254.4,
+      "left": 288,
+      "attrs": { "color": "green", "label": "Comfort Temperature" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "rgb_blue",
+      "top": 304.4,
+      "left": 288,
+      "attrs": { "color": "blue", "label": "Cool Temperature" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 63.35,
+      "left": 220.8,
+      "attrs": { "value": "330" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 113.35,
+      "left": 220.8,
+      "attrs": { "value": "330" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 163.35,
+      "left": 220.8,
+      "attrs": { "value": "330" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r4",
+      "top": 223.35,
+      "left": 220.8,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r5",
+      "top": 273.35,
+      "left": 220.8,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r6",
+      "top": 323.35,
+      "left": 220.8,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "dht1:VCC", "esp:3V3", "red", [ "v0", "h-86.4", "v86.4" ] ],
+    [ "dht1:GND", "esp:GND.2", "black", [ "v0", "h76.8", "v86.4" ] ],
+    [ "dht1:SDA", "esp:4", "green", [ "v19.2", "h76.9", "v182.4" ] ],
+    [ "lcd1:GND", "esp:GND.2", "black", [ "h0" ] ],
+    [ "lcd1:VCC", "esp:3V3", "red", [ "h0" ] ],
+    [ "lcd1:SDA", "esp:21", "blue", [ "h0" ] ],
+    [ "lcd1:SCL", "esp:22", "yellow", [ "h0" ] ],
+    [ "led_fan:A", "r1:2", "red", [ "v0" ] ],
+    [ "r1:1", "esp:2", "red", [ "v0" ] ],
+    [ "led_fan:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "led_status:A", "r2:2", "green", [ "v0" ] ],
+    [ "r2:1", "esp:15", "green", [ "v0" ] ],
+    [ "led_status:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "led_alert:A", "r3:2", "yellow", [ "v0" ] ],
+    [ "r3:1", "esp:16", "yellow", [ "v0" ] ],
+    [ "led_alert:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "rgb_red:A", "r4:2", "red", [ "v0" ] ],
+    [ "r4:1", "esp:25", "red", [ "v0" ] ],
+    [ "rgb_red:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "rgb_green:A", "r5:2", "green", [ "v0" ] ],
+    [ "r5:1", "esp:26", "green", [ "v0" ] ],
+    [ "rgb_green:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "rgb_blue:A", "r6:2", "blue", [ "v0" ] ],
+    [ "r6:1", "esp:27", "blue", [ "v0" ] ],
+    [ "rgb_blue:C", "esp:GND.1", "black", [ "v0" ] ],
+    [ "btn1:1.l", "esp:5", "blue", [ "h0" ] ],
+    [ "btn1:2.r", "esp:GND.2", "black", [ "h0" ] ]
+  ],
+  "dependencies": {}
+}

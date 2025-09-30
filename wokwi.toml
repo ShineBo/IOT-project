@@ -1,0 +1,5 @@
+[wokwi]
+version = 1
+platformio_env = "esp32dev"
+firmware = ".pio/build/esp32dev/firmware.elf"
+diagram = "wokwi/diagram.json"

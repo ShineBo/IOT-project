@@ -1,104 +1,70 @@
 /*
-  Enhanced Smart Fan Control System with LCD & RGB LED
-  ESP32 + DHT22 + LCD I2C + RGB LED + Visual Feedback
+  Smart Fan Control System with MQTT/Node-RED Integration
+  ESP32 + DHT22 + MQTT + Node-RED Dashboard
   
   Features:
   - DHT22 temperature & humidity monitoring
-  - 16x2 LCD I2C display for real-time data
-  - RGB LED color-coded temperature indication
-  - LED indicators for system states
-  - Serial plotter-compatible output
-  - Temperature trend tracking
-  - Manual override capability
+  - MQTT communication with Node-RED
+  - Automatic fan control based on temperature threshold
+  - Manual override via MQTT commands
+  - Real-time data publishing to dashboard
+  - Simulates FPGA logic in software for testing
 */
 
 #include <Arduino.h>
 #include "DHT.h"
-#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// WiFi credentials (for simulation)
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// MQTT Broker settings
+const char* mqtt_broker = "test.mosquitto.org";  // Public broker for testing
+const int mqtt_port = 1883;
+const char* mqtt_client_id = "ESP32_SmartFan_001";
+
+// MQTT Topics
+const char* topic_temperature = "smartfan/temperature";
+const char* topic_humidity = "smartfan/humidity";
+const char* topic_fan_status = "smartfan/fan/status";
+const char* topic_fan_command = "smartfan/fan/command";
+const char* topic_mode = "smartfan/mode";
+const char* topic_threshold = "smartfan/threshold";
 
 // Pin Definitions
 #define DHTPIN 4              // DHT data pin
 #define DHTTYPE DHT22         // DHT sensor type
-#define FAN_PIN 2             // Fan control (red LED)
-#define STATUS_LED_PIN 15     // System status (green LED)
-#define ALERT_LED_PIN 16      // Temperature alert (yellow LED)
-#define BUTTON_PIN 5          // Manual override button
-
-// RGB LED pins
-#define RGB_RED_PIN 25
-#define RGB_GREEN_PIN 26
-#define RGB_BLUE_PIN 27
+#define FAN_PIN 2             // Fan control (relay/LED)
+#define STATUS_LED_PIN 15     // System status indicator
 
 // System Parameters
-const float TEMP_THRESHOLD = 30.0;      // Temperature threshold (°C)
-const float HYSTERESIS = 1.0;           // Prevent rapid switching
-const unsigned long READ_INTERVAL = 2000;  // Sensor read interval (ms)
-const unsigned long BLINK_INTERVAL = 500;  // Status LED blink rate
-const unsigned long LCD_UPDATE_INTERVAL = 1000; // LCD update rate
-
-// Temperature ranges for RGB LED
-const float TEMP_COOL = 25.0;      // Below this = Blue (cool)
-const float TEMP_COMFORT = 30.0;   // Between cool and hot = Green (comfortable)
-// Above TEMP_COMFORT = Red (hot)
+float TEMP_THRESHOLD = 30.0;           // Temperature threshold (°C)
+const float HYSTERESIS = 1.0;          // Prevent rapid switching
+const unsigned long READ_INTERVAL = 3000;   // Sensor read interval (ms)
+const unsigned long MQTT_INTERVAL = 2000;   // MQTT publish interval (ms)
 
 // System Objects
 DHT dht(DHTPIN, DHTTYPE);
-LiquidCrystal_I2C lcd(0x27, 16, 2);  // I2C address 0x27, 16 columns, 2 rows
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
 
 // System State
 unsigned long lastReadTime = 0;
-unsigned long lastBlinkTime = 0;
-unsigned long lastLCDUpdate = 0;
-bool statusLedState = false;
+unsigned long lastMqttTime = 0;
 bool fanState = false;
 bool manualOverride = false;
-bool lastButtonState = HIGH;
-float tempHistory[5] = {0};  // Store last 5 readings
-int historyIndex = 0;
-
-// Custom LCD characters
-byte degreeSymbol[8] = {
-  0b00110,
-  0b01001,
-  0b01001,
-  0b00110,
-  0b00000,
-  0b00000,
-  0b00000,
-  0b00000
-};
-
-byte fanIcon[8] = {
-  0b00100,
-  0b10101,
-  0b01110,
-  0b11111,
-  0b01110,
-  0b10101,
-  0b00100,
-  0b00000
-};
-
-byte dropIcon[8] = {
-  0b00100,
-  0b00100,
-  0b01010,
-  0b01010,
-  0b10001,
-  0b10001,
-  0b01110,
-  0b00000
-};
+float currentTemp = 0.0;
+float currentHum = 0.0;
 
 // Function prototypes
-void updateLEDs();
-void updateRGB(float temp);
-void updateLCD(float temp, float hum);
-void updateTemperatureHistory(float temp);
-float getAverageTemp();
-void printSerialData(float temp, float hum);
-void checkManualOverride();
-void setRGBColor(int red, int green, int blue);
+void setupWiFi();
+void reconnectMQTT();
+void mqttCallback(char* topic, byte* payload, unsigned int length);
+void controlFan(bool state);
+void publishSensorData();
+void fpgaLogic(float temperature);
 
 void setup() {
   Serial.begin(115200);
@@ -106,77 +72,42 @@ void setup() {
   // Initialize DHT sensor
   dht.begin();
   
-  // Initialize LCD
-  lcd.init();
-  lcd.backlight();
-  lcd.createChar(0, degreeSymbol);
-  lcd.createChar(1, fanIcon);
-  lcd.createChar(2, dropIcon);
-  
-  // Display startup screen
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Smart Fan Ctrl");
-  lcd.setCursor(0, 1);
-  lcd.print("Initializing...");
-  
   // Configure pins
   pinMode(FAN_PIN, OUTPUT);
   pinMode(STATUS_LED_PIN, OUTPUT);
-  pinMode(ALERT_LED_PIN, OUTPUT);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(RGB_RED_PIN, OUTPUT);
-  pinMode(RGB_GREEN_PIN, OUTPUT);
-  pinMode(RGB_BLUE_PIN, OUTPUT);
   
   // Initial states
   digitalWrite(FAN_PIN, LOW);
-  digitalWrite(STATUS_LED_PIN, HIGH);
-  digitalWrite(ALERT_LED_PIN, LOW);
-  setRGBColor(0, 0, 255);  // Blue on startup
+  digitalWrite(STATUS_LED_PIN, LOW);
   
   // Startup message
   Serial.println("\n╔════════════════════════════════════════╗");
-  Serial.println("║   Smart Fan Control System v3.0       ║");
-  Serial.println("║   ESP32 + DHT22 + LCD + RGB LED       ║");
+  Serial.println("║  Smart Fan Control with MQTT/Node-RED ║");
+  Serial.println("║  ESP32 + DHT22 + FPGA Logic Simulation║");
   Serial.println("╚════════════════════════════════════════╝");
   Serial.println();
-  Serial.print("Temperature Threshold: ");
-  Serial.print(TEMP_THRESHOLD);
-  Serial.println(" °C");
-  Serial.print("Hysteresis Band: ±");
-  Serial.print(HYSTERESIS);
-  Serial.println(" °C");
-  Serial.println("\nRGB Temperature Ranges:");
-  Serial.print("  Blue (Cool):    < ");
-  Serial.print(TEMP_COOL);
-  Serial.println(" °C");
-  Serial.print("  Green (Comfort): ");
-  Serial.print(TEMP_COOL);
-  Serial.print("-");
-  Serial.print(TEMP_COMFORT);
-  Serial.println(" °C");
-  Serial.print("  Red (Hot):      > ");
-  Serial.print(TEMP_COMFORT);
-  Serial.println(" °C");
-  Serial.println("\n--- System Ready ---\n");
   
-  delay(2000);  // Stabilization delay
-  lcd.clear();
+  // Connect to WiFi
+  setupWiFi();
+  
+  // Setup MQTT
+  mqtt.setServer(mqtt_broker, mqtt_port);
+  mqtt.setCallback(mqttCallback);
+  
+  Serial.println("\n--- System Ready ---\n");
+  digitalWrite(STATUS_LED_PIN, HIGH);
+  
+  delay(2000);
 }
 
 void loop() {
   unsigned long currentTime = millis();
   
-  // Status LED heartbeat
-  if (currentTime - lastBlinkTime >= BLINK_INTERVAL) {
-    lastBlinkTime = currentTime;
-    statusLedState = !statusLedState;
-    digitalWrite(STATUS_LED_PIN, statusLedState);
+  // Maintain MQTT connection
+  if (!mqtt.connected()) {
+    reconnectMQTT();
   }
-  
-  // Check manual override button
-  checkManualOverride();
+  mqtt.loop();
   
   // Read sensor at intervals
   if (currentTime - lastReadTime >= READ_INTERVAL) {
@@ -189,229 +120,184 @@ void loop() {
     // Validate readings
     if (isnan(temperature) || isnan(humidity)) {
       Serial.println("⚠ ERROR: Sensor read failed!");
-      digitalWrite(ALERT_LED_PIN, HIGH);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("SENSOR ERROR!");
-      lcd.setCursor(0, 1);
-      lcd.print("Check DHT22");
-      setRGBColor(255, 0, 255);  // Magenta for error
       return;
     }
     
-    digitalWrite(ALERT_LED_PIN, LOW);
+    currentTemp = temperature;
+    currentHum = humidity;
     
-    // Update temperature history
-    updateTemperatureHistory(temperature);
-    float avgTemp = getAverageTemp();
-    
-    // Fan control logic (if not in manual override)
+    // FPGA Logic Simulation (automatic mode only)
     if (!manualOverride) {
-      // Hysteresis logic to prevent rapid switching
-      if (temperature > TEMP_THRESHOLD + HYSTERESIS) {
-        fanState = true;
-      } else if (temperature < TEMP_THRESHOLD - HYSTERESIS) {
-        fanState = false;
-      }
-      // If within hysteresis band, maintain current state
+      fpgaLogic(temperature);
     }
     
-    // Apply fan state
-    digitalWrite(FAN_PIN, fanState ? HIGH : LOW);
-    
-    // Update visual indicators
-    updateLEDs();
-    updateRGB(temperature);
-    
-    // Update LCD
-    if (currentTime - lastLCDUpdate >= LCD_UPDATE_INTERVAL) {
-      lastLCDUpdate = currentTime;
-      updateLCD(temperature, humidity);
-    }
-    
-    // Print formatted data
-    printSerialData(temperature, humidity);
+    // Print to Serial
+    Serial.println("┌─────────────────────────────────────────┐");
+    Serial.print("│ Temperature: ");
+    Serial.print(temperature, 1);
+    Serial.println(" °C                  │");
+    Serial.print("│ Humidity:    ");
+    Serial.print(humidity, 1);
+    Serial.println(" %                    │");
+    Serial.print("│ Threshold:   ");
+    Serial.print(TEMP_THRESHOLD, 1);
+    Serial.println(" °C                  │");
+    Serial.print("│ Fan Status:  ");
+    Serial.print(fanState ? "ON " : "OFF");
+    Serial.print(manualOverride ? " (MANUAL)" : " (AUTO)  ");
+    Serial.println("      │");
+    Serial.println("└─────────────────────────────────────────┘\n");
+  }
+  
+  // Publish to MQTT at intervals
+  if (currentTime - lastMqttTime >= MQTT_INTERVAL) {
+    lastMqttTime = currentTime;
+    publishSensorData();
   }
 }
 
-void setRGBColor(int red, int green, int blue) {
-  analogWrite(RGB_RED_PIN, red);
-  analogWrite(RGB_GREEN_PIN, green);
-  analogWrite(RGB_BLUE_PIN, blue);
-}
-
-void updateRGB(float temp) {
-  if (temp < TEMP_COOL) {
-    // Cool temperature - Blue
-    setRGBColor(0, 0, 255);
-  } else if (temp < TEMP_COMFORT) {
-    // Comfortable temperature - Green
-    // Smoothly transition from Blue to Green
-    float ratio = (temp - TEMP_COOL) / (TEMP_COMFORT - TEMP_COOL);
-    int blue = (int)(255 * (1 - ratio));
-    int green = (int)(255 * ratio);
-    setRGBColor(0, green, blue);
+void setupWiFi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✓ WiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
   } else {
-    // Hot temperature - Red
-    // Smoothly transition from Green to Red
-    float ratio = min((temp - TEMP_COMFORT) / 5.0, 1.0);  // 5 degree range for transition
-    int red = (int)(255 * ratio);
-    int green = (int)(255 * (1 - ratio));
-    setRGBColor(red, green, 0);
+    Serial.println("\n✗ WiFi Connection Failed!");
   }
 }
 
-void updateLCD(float temp, float hum) {
-  lcd.clear();
-  
-  // First line: Temperature with custom degree symbol and fan icon
-  lcd.setCursor(0, 0);
-  lcd.print("T:");
-  lcd.print(temp, 1);
-  lcd.write(0);  // Degree symbol
-  lcd.print("C ");
-  
-  if (fanState) {
-    lcd.write(1);  // Fan icon
-    lcd.print("ON");
-  } else {
-    lcd.print("   OFF");
-  }
-  
-  // Second line: Humidity with drop icon and mode
-  lcd.setCursor(0, 1);
-  lcd.write(2);  // Drop icon
-  lcd.print(":");
-  lcd.print(hum, 1);
-  lcd.print("% ");
-  
-  if (manualOverride) {
-    lcd.print("MAN");
-  } else {
-    lcd.print("AUTO");
-  }
-}
-
-void checkManualOverride() {
-  bool currentButtonState = digitalRead(BUTTON_PIN);
-  
-  // Detect button press (falling edge)
-  if (lastButtonState == HIGH && currentButtonState == LOW) {
-    delay(50);  // Debounce
-    manualOverride = !manualOverride;
+void reconnectMQTT() {
+  while (!mqtt.connected()) {
+    Serial.print("Connecting to MQTT broker...");
     
-    if (manualOverride) {
-      fanState = !fanState;  // Toggle fan
-      Serial.println("\n>>> MANUAL OVERRIDE ACTIVATED <<<");
-      Serial.print("Fan manually set to: ");
-      Serial.println(fanState ? "ON" : "OFF");
+    if (mqtt.connect(mqtt_client_id)) {
+      Serial.println(" Connected!");
       
-      // Show manual mode on LCD briefly
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("MANUAL MODE");
-      lcd.setCursor(0, 1);
-      lcd.print("Fan: ");
-      lcd.print(fanState ? "ON" : "OFF");
-      delay(1500);
+      // Subscribe to command topics
+      mqtt.subscribe(topic_fan_command);
+      mqtt.subscribe(topic_threshold);
+      
+      Serial.println("✓ Subscribed to command topics");
+      
+      // Publish initial status
+      mqtt.publish(topic_mode, manualOverride ? "MANUAL" : "AUTO");
+      
     } else {
-      Serial.println("\n>>> AUTOMATIC MODE RESUMED <<<");
+      Serial.print(" Failed, rc=");
+      Serial.print(mqtt.state());
+      Serial.println(" Retrying in 5 seconds...");
+      delay(5000);
+    }
+  }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  // Convert payload to string
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  Serial.print("📩 MQTT Message [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  Serial.println(message);
+  
+  // Handle fan command
+  if (String(topic) == topic_fan_command) {
+    if (message == "ON") {
+      manualOverride = true;
+      controlFan(true);
+      mqtt.publish(topic_mode, "MANUAL");
+      Serial.println(">>> Manual Override: Fan ON");
+    } 
+    else if (message == "OFF") {
+      manualOverride = true;
+      controlFan(false);
+      mqtt.publish(topic_mode, "MANUAL");
+      Serial.println(">>> Manual Override: Fan OFF");
+    }
+    else if (message == "AUTO") {
+      manualOverride = false;
+      mqtt.publish(topic_mode, "AUTO");
+      Serial.println(">>> Automatic Mode Resumed");
+      // Re-evaluate temperature immediately
+      fpgaLogic(currentTemp);
+    }
+  }
+  
+  // Handle threshold change
+  if (String(topic) == topic_threshold) {
+    float newThreshold = message.toFloat();
+    if (newThreshold > 0 && newThreshold < 50) {
+      TEMP_THRESHOLD = newThreshold;
+      Serial.print(">>> Threshold updated to: ");
+      Serial.print(TEMP_THRESHOLD);
+      Serial.println(" °C");
       
-      // Show auto mode on LCD briefly
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("AUTO MODE");
-      lcd.setCursor(0, 1);
-      lcd.print("Resuming...");
-      delay(1500);
+      // Re-evaluate if in auto mode
+      if (!manualOverride) {
+        fpgaLogic(currentTemp);
+      }
     }
   }
+}
+
+void fpgaLogic(float temperature) {
+  // Simulates FPGA digital logic for fan control
+  // Uses hysteresis to prevent rapid switching
   
-  lastButtonState = currentButtonState;
-}
-
-void updateTemperatureHistory(float temp) {
-  tempHistory[historyIndex] = temp;
-  historyIndex = (historyIndex + 1) % 5;
-}
-
-float getAverageTemp() {
-  float sum = 0;
-  int count = 0;
-  for (int i = 0; i < 5; i++) {
-    if (tempHistory[i] > 0) {
-      sum += tempHistory[i];
-      count++;
-    }
+  bool newFanState = fanState;
+  
+  if (temperature > TEMP_THRESHOLD + HYSTERESIS) {
+    newFanState = true;
+  } else if (temperature < TEMP_THRESHOLD - HYSTERESIS) {
+    newFanState = false;
   }
-  return (count > 0) ? (sum / count) : 0;
-}
-
-void updateLEDs() {
-  // Alert LED indicates high temperature
-  if (fanState) {
-    digitalWrite(ALERT_LED_PIN, HIGH);
-  } else {
-    digitalWrite(ALERT_LED_PIN, LOW);
+  // If within hysteresis band, maintain current state
+  
+  if (newFanState != fanState) {
+    controlFan(newFanState);
+    Serial.print("🔧 FPGA Logic: Temperature ");
+    Serial.print(temperature, 1);
+    Serial.print("°C → Fan ");
+    Serial.println(newFanState ? "ON" : "OFF");
   }
 }
 
-void printSerialData(float temp, float hum) {
-  // Determine temperature trend
-  char trend = '→';
-  if (historyIndex >= 2) {
-    int prevIdx = (historyIndex - 1 + 5) % 5;
-    if (temp > tempHistory[prevIdx] + 0.5) trend = '↑';
-    else if (temp < tempHistory[prevIdx] - 0.5) trend = '↓';
+void controlFan(bool state) {
+  fanState = state;
+  digitalWrite(FAN_PIN, state ? HIGH : LOW);
+  
+  // Publish fan status to MQTT
+  mqtt.publish(topic_fan_status, state ? "ON" : "OFF", true);
+}
+
+void publishSensorData() {
+  if (mqtt.connected()) {
+    // Publish temperature
+    char tempStr[8];
+    dtostrf(currentTemp, 5, 1, tempStr);
+    mqtt.publish(topic_temperature, tempStr);
+    
+    // Publish humidity
+    char humStr[8];
+    dtostrf(currentHum, 5, 1, humStr);
+    mqtt.publish(topic_humidity, humStr);
+    
+    // Publish current mode
+    mqtt.publish(topic_mode, manualOverride ? "MANUAL" : "AUTO");
+    
+    Serial.println("📤 Data published to MQTT");
   }
-  
-  // Calculate distance from threshold
-  float delta = temp - TEMP_THRESHOLD;
-  
-  // Determine RGB color zone
-  String colorZone;
-  if (temp < TEMP_COOL) {
-    colorZone = "BLUE (Cool)";
-  } else if (temp < TEMP_COMFORT) {
-    colorZone = "GREEN (Comfort)";
-  } else {
-    colorZone = "RED (Hot)";
-  }
-  
-  Serial.println("┌─────────────────────────────────────────┐");
-  Serial.print("│ Temperature: ");
-  Serial.print(temp, 1);
-  Serial.print(" °C  ");
-  Serial.print(trend);
-  Serial.print("  (Δ");
-  Serial.print(delta >= 0 ? "+" : "");
-  Serial.print(delta, 1);
-  Serial.println(" °C) │");
-  
-  Serial.print("│ Humidity:    ");
-  Serial.print(hum, 1);
-  Serial.println(" %                    │");
-  
-  Serial.print("│ Avg Temp:    ");
-  Serial.print(getAverageTemp(), 1);
-  Serial.println(" °C (5-reading avg)   │");
-  
-  Serial.print("│ RGB Zone:    ");
-  Serial.print(colorZone);
-  for (int i = colorZone.length(); i < 23; i++) Serial.print(" ");
-  Serial.println("│");
-  
-  Serial.print("│ Fan Status:  ");
-  Serial.print(fanState ? "🔴 ON " : "⚪ OFF");
-  if (manualOverride) {
-    Serial.println(" (MANUAL)            │");
-  } else {
-    Serial.println(" (AUTO)              │");
-  }
-  
-  Serial.print("│ System Mode: ");
-  Serial.println(manualOverride ? "MANUAL OVERRIDE          │" : "AUTOMATIC CONTROL        │");
-  
-  Serial.println("└─────────────────────────────────────────┘");
-  Serial.println();
 }

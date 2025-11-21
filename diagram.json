@@ -1,33 +1,43 @@
 {
   "version": 1,
-  "author": "Smart Fan Control with MQTT",
+  "author": "Smart HVAC Control with MQTT",
   "editor": "wokwi",
   "parts": [
-    { 
-      "type": "board-esp32-devkit-c-v4", 
-      "id": "esp", 
-      "top": 0, 
-      "left": 0, 
-      "attrs": {} 
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
     },
     {
       "type": "wokwi-dht22",
       "id": "dht1",
       "top": -96,
       "left": 38.4,
-      "attrs": { 
-        "temperature": "32.5", 
-        "humidity": "65" 
+      "attrs": {
+        "temperature": "28.5",
+        "humidity": "60"
       }
     },
     {
       "type": "wokwi-led",
-      "id": "led_fan",
+      "id": "led_cool",
       "top": 96,
       "left": 230.4,
-      "attrs": { 
-        "color": "red", 
-        "label": "FAN (Relay)" 
+      "attrs": {
+        "color": "blue",
+        "label": "COOL (AC Relay)"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_heat",
+      "top": 96,
+      "left": 316.8,
+      "attrs": {
+        "color": "red",
+        "label": "HEAT (Heater Relay)"
       }
     },
     {
@@ -35,44 +45,57 @@
       "id": "led_status",
       "top": 48,
       "left": 230.4,
-      "attrs": { 
-        "color": "green", 
-        "label": "System Status" 
+      "attrs": {
+        "color": "green",
+        "label": "System Status"
       }
     },
     {
       "type": "wokwi-resistor",
-      "id": "r1",
+      "id": "r_cool",
       "top": 105.6,
       "left": 163.2,
-      "attrs": { 
-        "value": "330" 
+      "attrs": {
+        "value": "330"
       }
     },
     {
       "type": "wokwi-resistor",
-      "id": "r2",
+      "id": "r_heat",
+      "top": 105.6,
+      "left": 249.6,
+      "attrs": {
+        "value": "330"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_status",
       "top": 57.6,
       "left": 163.2,
-      "attrs": { 
-        "value": "330" 
+      "attrs": {
+        "value": "330"
       }
     }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
     [ "esp:RX", "$serialMonitor:TX", "", [] ],
-    
+
     [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ],
     [ "dht1:GND", "esp:GND.2", "black", [ "v0" ] ],
     [ "dht1:SDA", "esp:4", "green", [ "v0" ] ],
-    
-    [ "r1:1", "esp:2", "red", [ "v0" ] ],
-    [ "r1:2", "led_fan:A", "red", [ "v0" ] ],
-    [ "led_fan:C", "esp:GND.1", "black", [ "v0" ] ],
-    
-    [ "r2:1", "esp:15", "green", [ "v0" ] ],
-    [ "r2:2", "led_status:A", "green", [ "v0" ] ],
+
+    [ "r_cool:1", "esp:2", "blue", [ "v0" ] ],
+    [ "r_cool:2", "led_cool:A", "blue", [ "v0" ] ],
+    [ "led_cool:C", "esp:GND.1", "black", [ "v0" ] ],
+
+    [ "r_heat:1", "esp:5", "red", [ "v0" ] ],
+    [ "r_heat:2", "led_heat:A", "red", [ "v0" ] ],
+    [ "led_heat:C", "esp:GND.1", "black", [ "v0" ] ],
+
+    [ "r_status:1", "esp:15", "green", [ "v0" ] ],
+    [ "r_status:2", "led_status:A", "green", [ "v0" ] ],
     [ "led_status:C", "esp:GND.1", "black", [ "v0" ] ]
   ],
   "dependencies": {}
